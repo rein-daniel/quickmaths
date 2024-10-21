@@ -3,13 +3,45 @@
 #include <stdlib.h>
 #include <string.h>
 
+const int ASCII_ZERO = 48;
+
 typedef struct {
   int length;
   float *args;
 } FloatArguments;
 
+// Lexer -> interpret input as list of tokens
+// Parser -> build syntax tree out of tokens
+
+typedef enum {
+  T_OPEN_BRACKET,   // (
+  T_CLOSED_BRACKET, // )
+  T_PLUS,           // +
+  T_MINUS,          // -
+  T_NEGATIVE,       // -
+  T_TIMES,          // *
+  T_DIVIDE,         // /
+  T_CARROT,         // ^
+  T_NUMBER,
+} TOKEN_TYPE;
+
+typedef struct {
+  TOKEN_TYPE type;
+  float value;
+  int precenence;
+} Token;
+
+typedef struct {
+  Token *tokens;
+  int length;
+} Expression;
+
 void print_manual();
 FloatArguments convert_arguments_to_floats(int argc, char **argv);
+
+int parse_expression(char *input, Expression *exp);
+int interpret_expression(Expression *exp);
+void print_expression(Expression *exp);
 
 int pi();
 int euler();
@@ -51,6 +83,9 @@ int arc_secant(FloatArguments args);
 int is_prime(FloatArguments args);
 
 int factorial(FloatArguments args);
+
+int custom_root(FloatArguments args);
+int custom_logarithm(FloatArguments args);
 
 int main(int argc, char **argv) {
   if (argc < 2) {
@@ -94,8 +129,7 @@ int main(int argc, char **argv) {
       strcmp(cmd, "logarithm_base_2") == 0) {
     return base_2_logarithm(convert_arguments_to_floats(argc, argv));
   }
-  if (strcmp(cmd, "log10") == 0 || strcmp(cmd, "log") == 0 ||
-      strcmp(cmd, "log_base_10") == 0 ||
+  if (strcmp(cmd, "log10") == 0 || strcmp(cmd, "log_base_10") == 0 ||
       strcmp(cmd, "logarithm_base_10") == 0 ||
       strcmp(cmd, "common_logarithm") == 0) {
     return common_logarithm(convert_arguments_to_floats(argc, argv));
@@ -151,10 +185,19 @@ int main(int argc, char **argv) {
   if (strcmp(cmd, "fact") == 0 || strcmp(cmd, "factorial") == 0) {
     return factorial(convert_arguments_to_floats(argc, argv));
   }
+  if (strcmp(cmd, "root") == 0 || strcmp(cmd, "custom_root") == 0) {
+    return custom_root(convert_arguments_to_floats(argc, argv));
+  }
+  if (strcmp(cmd, "log") == 0 || strcmp(cmd, "custom_logarithm") == 0) {
+    return custom_logarithm(convert_arguments_to_floats(argc, argv));
+  }
+
+  printf("Number of arguments: %d\n", argc);
 
   if (argc == 2) {
-    printf("its an expression\n");
-    return 0;
+    Expression *exp;
+    exp = malloc(1024);
+    return parse_expression(argv[1], exp);
   }
 
   printf("ERROR: could not parse arguments\n");
@@ -189,11 +232,9 @@ void print_manual() {
 
 // commands
 //
-// TODO input: mode + number
-// root (2, ...)
-// log (10, ...)
-//
 // input: vector <1, 2, 3>
+// vector_length / len / vec_len
+// normalized_vector / normalize
 //
 // input: vector list <1, 2> <3, 4> OR 2 <1, 4> => <2, 8>
 //
@@ -206,15 +247,12 @@ void print_manual() {
 // std / standard_deviation
 // var / variance
 //
-// TODO functions:
+// TODO functions + (interval)
 // roots / zeros / zeroes
 // integral
 // derivative
-//
-// TODO
-// lim / limes
-// derivative
 // anti_derivative
+// lim / limes
 
 int pi() {
   printf("Result: %f\n", M_PI);
@@ -497,7 +535,8 @@ int is_prime(FloatArguments args) {
   int number = (int)args.args[0];
 
   if (number < 0) {
-    printf("Result: %d is not prime. Negative numbers are never prime.\n", number);
+    printf("Result: %d is not prime. Negative numbers are never prime.\n",
+           number);
     return 0;
   }
 
@@ -548,5 +587,197 @@ int factorial(FloatArguments args) {
   return 0;
 }
 
+int custom_root(FloatArguments args) {
+  if (args.length != 2) {
+    printf("ERROR: custom_root expects 2 argument but got %d\n", args.length);
+    return 1;
+  }
+
+  // TODO check if first argument is positive integer
+
+  float index = (int)args.args[0];
+
+  if (index < 0) {
+    printf("ERROR: Sorry, we do not do imaginary numbers (yet?) sorry. The "
+           "index of "
+           "the radicant must be a positive natural number\n");
+    return 1;
+  }
+
+  if (index == 0) {
+    printf("ERROR: The index of the radicant cannot be zero\n");
+    return 1;
+  }
+
+  float radicant = args.args[1];
+
+  printf("Result: %f\n", pow(radicant, 1.0f / index));
+
+  return 0;
+}
+
+int custom_logarithm(FloatArguments args) {
+  if (args.length != 2) {
+    printf("ERROR: custom_logarithm expects 2 argument but got %d\n",
+           args.length);
+    return 1;
+  }
+
+  // TODO check if first argument is positive integer
+
+  float base = (int)args.args[0];
+
+  if (base <= 0) {
+    printf("ERROR: the base of a logarithm bust be greater than zero\n");
+    return 1;
+  }
+
+  float input = args.args[1];
+
+  printf("Result: %f\n", log2(input) / log2(base));
+
+  return 0;
+}
+
 // expressions
 // basic math 7 * 4 (-2 / 3) AND 4^2 - 3
+
+int parse_expression(char *input, Expression *exp) {
+  printf("Input to parse: %s\n", input);
+
+  int current_token;
+  current_token = 0;
+
+  exp->tokens = malloc(1024);
+  exp->length = current_token;
+
+  int sign = 1;
+
+  // scanner
+  int len = strlen(input);
+  for (int i = 0; i < len; ++i) {
+
+    char current_char = input[i];
+
+    if (current_char == ' ') {
+      continue;
+    }
+
+    char next_char = '@';
+    if (i < len) {
+      next_char = input[i + 1];
+    }
+
+    printf("scanning: %d %c\n", i, input[i]);
+
+    Token t;
+
+    if (current_char == '(') {
+      t.type = T_OPEN_BRACKET;
+      sign = 1;
+      t.value = -1;
+      t.precenence = 9;
+    } else if (current_char == ')') {
+      t.type = T_CLOSED_BRACKET;
+      sign = 1;
+      t.value = 1;
+      t.precenence = 9;
+    } else if (current_char == '+') {
+      t.type = T_PLUS;
+      sign = 1;
+      t.value = 1;
+      t.precenence = 5;
+    } else if (current_char == '-') {
+      if (next_char != '@' && next_char >= '0' && next_char < '9') {
+        t.type = T_NEGATIVE;
+        sign = -1;
+        t.value = 1;
+        t.precenence = 0;
+      } else {
+        t.type = T_MINUS;
+        sign = 1;
+        t.value = 1;
+        t.precenence = 4;
+      }
+    } else if (current_char == '*') {
+      t.type = T_TIMES;
+      sign = 1;
+      t.value = 2;
+      t.precenence = 7;
+    } else if (current_char == '/') {
+      t.type = T_DIVIDE;
+      sign = 1;
+      t.value = 6;
+    } else if (current_char == '^') {
+      t.type = T_CARROT;
+      sign = 1;
+      t.value = 8;
+    } else if (current_char >= '0' && current_char <= '9') {
+      int number_length = i;
+      int encountered_period = 0;
+      while (number_length + 1 < len &&
+             ((input[number_length + 1] >= '0' &&
+               input[number_length + 1] <= '9') ||
+              input[number_length + 1] == '.' && encountered_period < 1)) {
+        number_length++;
+        if (input[number_length] == '.') {
+          encountered_period = 1;
+        }
+      }
+      t.type = T_NUMBER;
+      char *number = malloc(1024);
+      if (number_length != i) {
+        printf("Detected number: %s\n",
+               strncpy(number, input + i, number_length + 1 - i));
+        t.value = strtod(number, NULL) * sign;
+        i = number_length;
+      } else {
+        t.value = (current_char - ASCII_ZERO) * sign;
+      }
+      sign = 1;
+      t.precenence = 0;
+    } else {
+      printf("%c\n", current_char);
+      printf("ERROR: Syntax error when parsing the expression\n");
+      return 1;
+    }
+    exp->tokens[current_token] = t;
+    exp->length = current_token + 1;
+    current_token++;
+  }
+
+  print_expression(exp);
+
+  return 0;
+}
+
+int interpret_expression(Expression *exp) { return 0; }
+
+void print_expression(Expression *exp) {
+  for (int i = 0; i < exp->length; ++i) {
+    char c = '@';
+    Token t = exp->tokens[i];
+    if (t.type == T_OPEN_BRACKET) {
+      c = 'O';
+    } else if (t.type == T_CLOSED_BRACKET) {
+      c = 'C';
+    } else if (t.type == T_PLUS) {
+      c = 'P';
+    } else if (t.type == T_MINUS) {
+      c = 'M';
+    } else if (t.type == T_NEGATIVE) {
+      c = 'n';
+    } else if (t.type == T_TIMES) {
+      c = 'T';
+    } else if (t.type == T_DIVIDE) {
+      c = 'D';
+    } else if (t.type == T_CARROT) {
+      c = 'E';
+    } else {
+      printf("%f", t.value);
+      continue;
+    }
+    printf(" [%c] ", c);
+  }
+  printf("\n");
+}
